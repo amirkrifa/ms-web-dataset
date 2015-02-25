@@ -85,8 +85,8 @@ class PagesSimilarityMatrix:
                                                             CORRELATION: correlation_value,
                                                             JACCARD: jaccard_index
                                                             }
-                if page_id == tmp_page_id:
-                    assert simitry_tracking[(page_id, tmp_page_id)][USED_DISTANCE] == 1.0
+#                 if page_id == tmp_page_id:
+#                     assert int(simitry_tracking[(page_id, tmp_page_id)][USED_DISTANCE]) == 1
                 
                 sim_vector.append((tmp_page_id, {COSINE: cosine_similarity, 
                                                  CORRELATION: correlation_value, 
@@ -127,45 +127,42 @@ class PagesSimilarityMatrix:
                 distances.append([1 - a for a in x])
                 
 
-        init_distances = np.asarray(distances)
+        np_distances = np.asarray(distances)
         import scipy.cluster
         from sklearn.metrics import silhouette_score
         from scipy.spatial.distance import squareform
-        distances = squareform(init_distances)
+        distances = squareform(np_distances)
         
         #http://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.cluster.hierarchy.linkage.html
-        ddgm = scipy.cluster.hierarchy.linkage(distances)
+        ddgm = scipy.cluster.hierarchy.linkage(distances, method='single')
         # http://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.cluster.hierarchy.fcluster.html
-        #print 'ddgm: ', ddgm
-        nodes = scipy.cluster.hierarchy.fcluster(ddgm, t=1.2)
+        nodes = scipy.cluster.hierarchy.fcluster(ddgm, t=70, criterion='maxclust')
         print 'nodes: ', len(set(nodes)), nodes
-        res = silhouette_score(init_distances , nodes, metric='precomputed')        
+        res = silhouette_score(np_distances , nodes, metric='precomputed')        
         print 'Res: ', res
     def kmedoids_cluster(self, similarities=None):
         # https://jpcomputing.wordpress.com/2014/05/18/pycluster-kmedoids-example/
         from sklearn.metrics import silhouette_score
 
+        distances = []
         if similarities is None:
-            distances = []
             for page_id, sim_vector in self._pages_similarities.iteritems():
                 distances.append([1-x[1][USED_DISTANCE] for x in sim_vector])
         else:
-            distances = []
             for x in similarities:
                 distances.append([1 - a for a in x])
-                
 
-        init_distances = np.asarray(distances)
+        np_distances = np.asarray(distances)
         import scipy.cluster
         from sklearn.metrics import silhouette_score
         from scipy.spatial.distance import squareform
-        distances = squareform(init_distances)
+        squareform_distances = squareform(np_distances)
         
         import Pycluster
-        nb_clusters = 60 # this is the number of cluster the dataset is supposed to be partitioned into
-        clusterid, error, nfound = Pycluster.kmedoids(distances, nclusters=nb_clusters, npass=100)
+        nb_clusters = 2 # this is the number of cluster the dataset is supposed to be partitioned into
+        clusterid, error, nfound = Pycluster.kmedoids(squareform_distances, nclusters=nb_clusters, npass=50)
         print 'clusterid: ', len(set(clusterid)),clusterid
-        res = silhouette_score(init_distances , clusterid, metric='precomputed')   
+        res = silhouette_score(np_distances , clusterid, metric='precomputed')   
         print 'Res: ', res
         return
         # grouping to clusters
@@ -205,7 +202,7 @@ class VectorsPairAnalysis:
         if sum([x > 0 for x in self._a]) == 0 or sum([x > 0 for x in self._b]) == 0:
             return 1 if self._a_id == self._b_id and not self._a_id is None  else 0
         from scipy.spatial.distance import cosine
-        val = 1 - cosine(self._a, self._b)
+        val = 1.0 - cosine(self._a, self._b)
         import math
         if math.isnan(val):
             print 'Check: ', sum([x > 0 for x in self._a]), sum([x > 0 for x in self._b])
@@ -536,7 +533,7 @@ def main():
         print '\nClustering ...'
         pcs = PagesSimilarityMatrix()
         res = pcs.load()
-        pcs.kmedoids_cluster(res)
+        pcs.hierarchical_cluster(res)
     else:
         assert(False)
 
