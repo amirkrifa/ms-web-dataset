@@ -1,4 +1,4 @@
-@relation pages users visits
+@relation pages-users-visits
 @attribute 10001 numeric
 @attribute 10002 numeric
 @attribute 10003 numeric
