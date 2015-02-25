@@ -15,7 +15,7 @@ COSINE = 'cosine'
 CORRELATION = 'correlation' 
 JACCARD = 'jaccard'
 ENABLE_WEIGHTING = False
-USED_DISTANCE = JACCARD
+USED_DISTANCE = COSINE
 
 
 class PagesSimilarityMatrix:
@@ -85,9 +85,8 @@ class PagesSimilarityMatrix:
                                                             CORRELATION: correlation_value,
                                                             JACCARD: jaccard_index
                                                             }
-                if tmp_page_id == page_id:
-                    if not simitry_tracking[(page_id, tmp_page_id)][USED_DISTANCE] == 1:
-                        raise 'Ouups %s'%str((page_id, tmp_page_id))
+                if page_id == tmp_page_id:
+                    assert simitry_tracking[(page_id, tmp_page_id)][USED_DISTANCE] == 1.0
                 
                 sim_vector.append((tmp_page_id, {COSINE: cosine_similarity, 
                                                  CORRELATION: correlation_value, 
@@ -116,7 +115,33 @@ class PagesSimilarityMatrix:
             tmp.append([x[1][USED_DISTANCE] for x in sim_vector])
             records_file.write('%s\n'%'\t'.join(map(str, line)))
         records_file.close()
-    def kmedoids_cluster(self, similarities=None, k=3):
+    def hierarchical_cluster(self,similarities=None):
+        from sklearn.metrics import silhouette_score
+        if similarities is None:
+            distances = []
+            for page_id, sim_vector in self._pages_similarities.iteritems():
+                distances.append([1-x[1][USED_DISTANCE] for x in sim_vector])
+        else:
+            distances = []
+            for x in similarities:
+                distances.append([1 - a for a in x])
+                
+
+        init_distances = np.asarray(distances)
+        import scipy.cluster
+        from sklearn.metrics import silhouette_score
+        from scipy.spatial.distance import squareform
+        distances = squareform(init_distances)
+        
+        #http://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.cluster.hierarchy.linkage.html
+        ddgm = scipy.cluster.hierarchy.linkage(distances)
+        # http://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.cluster.hierarchy.fcluster.html
+        #print 'ddgm: ', ddgm
+        nodes = scipy.cluster.hierarchy.fcluster(ddgm, t=1.2)
+        print 'nodes: ', len(set(nodes)), nodes
+        res = silhouette_score(init_distances , nodes, metric='precomputed')        
+        print 'Res: ', res
+    def kmedoids_cluster(self, similarities=None):
         # https://jpcomputing.wordpress.com/2014/05/18/pycluster-kmedoids-example/
         from sklearn.metrics import silhouette_score
 
@@ -125,31 +150,22 @@ class PagesSimilarityMatrix:
             for page_id, sim_vector in self._pages_similarities.iteritems():
                 distances.append([1-x[1][USED_DISTANCE] for x in sim_vector])
         else:
-            
             distances = []
             for x in similarities:
                 distances.append([1 - a for a in x])
-        distances = np.asarray(distances)
+                
+
+        init_distances = np.asarray(distances)
         import scipy.cluster
         from sklearn.metrics import silhouette_score
         from scipy.spatial.distance import squareform
-        distances = squareform(distances)
-        #print 'distances: ', distances
-        #http://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.cluster.hierarchy.linkage.html
-        ddgm = scipy.cluster.hierarchy.linkage(distances)
-        # http://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.cluster.hierarchy.fcluster.html
-        #print 'ddgm: ', ddgm
-        nodes = scipy.cluster.hierarchy.fcluster(ddgm, t=2000)
-        print 'nodes: ', len(set(nodes)), nodes
-        res = silhouette_score(distances , nodes, metric='precomputed')        
-        print 'Res: ', res
-        exit(1)
+        distances = squareform(init_distances)
         
         import Pycluster
-        nb_clusters = 190 # this is the number of cluster the dataset is supposed to be partitioned into
-        clusterid, error, nfound = Pycluster.kmedoids(distances, nclusters= nb_clusters, npass=100)
-        print 'clusterid: ', clusterid
-        res = silhouette_score(distances , clusterid, metric='precomputed')   
+        nb_clusters = 60 # this is the number of cluster the dataset is supposed to be partitioned into
+        clusterid, error, nfound = Pycluster.kmedoids(distances, nclusters=nb_clusters, npass=100)
+        print 'clusterid: ', len(set(clusterid)),clusterid
+        res = silhouette_score(init_distances , clusterid, metric='precomputed')   
         print 'Res: ', res
         return
         # grouping to clusters
@@ -159,7 +175,6 @@ class PagesSimilarityMatrix:
                 clusters_indexes[medoid] = [i]
             else:
                 clusters_indexes[medoid].append(i)
-        return 
     @staticmethod
     def load(file='pages_similarity_matrix.csv'):
         import codecs
@@ -406,7 +421,7 @@ def dump_users_weka_input_file(pages, users_visited_pages_ids, output_file_name)
 def dump_pages_weka_input_file(pages, users_visited_pages_ids, pages_vists,  output_file_name):
     import codecs
     records_file = codecs.open(output_file_name, 'w')
-    records_file.write('@relation pages users visits\n')
+    records_file.write('@relation pages-users-visits\n')
     for user_id in users_visited_pages_ids.keys():
         records_file.write('@attribute %d numeric\n'%(user_id))
     records_file.write('@data\n')
@@ -484,10 +499,12 @@ def main():
     parser.add_option('--item-based', dest="item_based", default=False, help='Run item based collaborative filtering', action='store_true') 
     parser.add_option('--user-based', dest="user_based", default=False, help='Run user based collaborative filtering', action='store_true')
     parser.add_option('--cluster', dest="cluster", default=False, help='Run clustering on already generated distance matrix', action='store_true')
+    parser.add_option('--dump-weka-files', dest="dump_weka_files", default=False, help='Dump weka input files', action='store_true')
+
     options, args_left = parser.parse_args()
     
     if options.test_src is None or options.train_src is None \
-      or (not options.item_based and not options.user_based and not options.cluster):
+      or (not options.item_based and not options.user_based and not options.cluster and not options.dump_weka_files):
         parser.print_help()
         exit(1)
     
@@ -498,24 +515,25 @@ def main():
     assert train_pages.keys() == test_pages.keys()
     
     # dump weka related data files
-    dump_users_weka_input_file(test_pages, test_users_visited_pages_ids, output_file_name='weka_users_input_test.arff')
-    dump_pages_weka_input_file(test_pages, test_users_visited_pages_ids, test_pages_vists, output_file_name='weka_pages_input_test.arff')
-    dump_users_weka_input_file(train_pages, train_users_visited_pages_ids, output_file_name='weka_users_input_training.arff')
-    dump_pages_weka_input_file(train_pages, train_users_visited_pages_ids, train_pages_vists,  output_file_name='weka_pages_input_training.arff')
+    if options.dump_weka_files:
+        dump_users_weka_input_file(test_pages, test_users_visited_pages_ids, output_file_name='weka_users_input_test.arff')
+        dump_pages_weka_input_file(test_pages, test_users_visited_pages_ids, test_pages_vists, output_file_name='weka_pages_input_test.arff')
+        dump_users_weka_input_file(train_pages, train_users_visited_pages_ids, output_file_name='weka_users_input_training.arff')
+        dump_pages_weka_input_file(train_pages, train_users_visited_pages_ids, train_pages_vists,  output_file_name='weka_pages_input_training.arff')
     
     
     if options.item_based:
         # item based recommendations
-        print 'Running item based approach ...'
+        print '\nRunning item based approach ...'
         evaluate_allbut1_item_based_recommendation(test_pages, test_users_visited_pages_ids, test_pages_vists,
                                                    train_pages, train_users_visited_pages_ids, train_pages_vists)
     elif options.user_based:
         # user based recommendations 
-        print 'Running user based approach ...'
+        print '\nRunning user based approach ...'
         evaluate_allbut1_user_based_recommendation(test_pages, test_users_visited_pages_ids, test_pages_vists,
                                                    train_pages, train_users_visited_pages_ids, train_pages_vists)
     elif options.cluster:
-        print 'Clustering ...'
+        print '\nClustering ...'
         pcs = PagesSimilarityMatrix()
         res = pcs.load()
         pcs.kmedoids_cluster(res)
